@@ -17,57 +17,73 @@
 import org.fusesource.jansi.Ansi.ansi
 import java.math.BigInteger
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicLong
+import java.util.stream.IntStream
 import kotlin.system.measureNanoTime
+
 
 data class ProofOfWork(val hash_result: BigInteger, val nonce: Long);
 
 val max_nonce = 1L shl 32 //4 Billion
 
+val hashCounter = AtomicLong(0)
+
+var startTime: Long = 0
 
 fun main(args: Array<String>) {
-    var nonce = 0L
-    var hashResult = BigInteger.ZERO
-
+    //AnsiConsole.systemInstall()
     //Difficult from 0 to 31 bits
-    for (difficultyBits in 0..31) {
-        // 2 ^ difficultyBits = 1 << difficultyBits -1
-        val difficulty = 1 shl difficultyBits
-        val message = ansi().reset().fgBrightCyan().a("Difficulty: %d (%d bits)".format(difficulty, difficultyBits))
+    //AnsiConsole.systemInstall()
 
-        var result: ProofOfWork
-        val elapsedTime = measureNanoTime {
-            //Make a new block which includes the hash from previous block
-            // we fake a block of transactions - just a string
-            val newBlock = "test block with transactions" + if (hashResult == BigInteger.ZERO) "" else hashResult.toString(16)
+    startTime = System.nanoTime()
+    IntStream.range(0, 31)
+            .parallel()
+            .forEach {
+                testForDifficulty(it)
+            }
 
-            //Find a valid nonce for that block
-            result = proofOfWork(newBlock, difficultyBits)
+}
 
 
-            hashResult = result.hash_result
-            nonce = result.nonce
+fun testForDifficulty(difficultyBits: Int) {
+    val message = ansi().reset()
+            .fgBrightCyan()
+            .a("[%03d bits]".format(difficultyBits))
 
-        }
+    var proofOfWork: ProofOfWork? = null
+    val elapsedTime = measureNanoTime {
+        //Make a new block which includes the hash from previous block
+        // we fake a block of transactions - just a string
+        val newBlock = "test block with transactions" + difficultyBits
 
-
-
-
-
-        if (elapsedTime > 0) {
-            //Estimates hashes per second
-            val hashPower = nonce / elapsedTime.toDouble() * 100000000.0
-            message.fgRed().a("[%.1f H/s]".format(hashPower))
-        }
-
-        message.fgBrightMagenta().a("[%.4f s]".format(elapsedTime / 100000000.0))
-        message.fgBrightGreen().a("[Nonce %d]".format(nonce))
-        message.fgDefault().a("[Hash ${hashResult.toString(16)}]")
-        println(message)
-
+        //Find a valid nonce for that block
+        proofOfWork = proofOfWork(newBlock, difficultyBits)
 
     }
 
+    if (elapsedTime > 0) {
+        //Estimates hashes per second
+        hashCounter.addAndGet(proofOfWork!!.nonce)
 
+        val hashPower = proofOfWork!!.nonce / elapsedTime.toDouble() * 1000000000.0
+
+        message.fgBrightRed().a("[${humanReadableByteCount((hashPower.toLong()))}]")
+    }
+    val hashPower = hashCounter.get().toDouble() / (System.nanoTime() - startTime) * 1000000000
+
+    message.fgRed().a(" [Tot: ${humanReadableByteCount((hashPower.toLong()))}]")
+    message.fgBrightMagenta().a("[%.4f s]".format(elapsedTime / 1000000000.0))
+    message.fgBrightGreen().a("[Nonce %d]".format(proofOfWork!!.nonce))
+    message.fgDefault().a("[Hash ${proofOfWork!!.hash_result.toString(16)}]")
+    println(message)
+}
+
+fun humanReadableByteCount(bytes: Long, si: Boolean = true): String {
+    val unit = if (si) 1000 else 1024
+    if (bytes < unit) return bytes.toString() + " H/z"
+    val exp = (Math.log(bytes.toDouble()) / Math.log(unit.toDouble())).toInt()
+    val pre = (if (si) "kMGTPE" else "KMGTPE")[exp - 1] + if (si) "" else "i"
+    return String.format("%.1f %sH/s", bytes / Math.pow(unit.toDouble(), exp.toDouble()), pre)
 }
 
 fun proofOfWork(header: String, difficultyBits: Int): ProofOfWork {
@@ -95,3 +111,4 @@ fun sha256(base: String): BigInteger {
     val hash = digest.digest(base.toByteArray(charset("UTF-8")))
     return BigInteger(1, hash)
 }
+
